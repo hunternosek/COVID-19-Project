@@ -1,0 +1,219 @@
+---
+title: "Getting Started with the NYT COVID-19 Data"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::readthedown:
+    highlight: kate
+    toc_depth: 2
+    code_download: true
+---
+
+
+```{r setup, include = FALSE}
+library(tidyverse)
+library(reactable)
+library(plotly)
+#devtools::install_github("UrbanInstitute/urbnmapr")
+library(urbnmapr)
+library(mapview)
+load("data/nyt_counties.rda")
+load("data/nyt_states.rda")
+knitr::opts_chunk$set(
+  size = "small",
+  error = TRUE,
+  fig.align = "center",
+  tidy = FALSE
+)
+```
+
+## Prerequisites and Setup
+
+### R Packages
+
+You will need to install the following packages:
+
+```{r eval = FALSE}
+install.packages(c(
+  "tidyverse",
+  "reactable",
+  "mapview"
+))
+devtools::install_github("UrbanInstitute/urbnmapr")
+```
+
+
+Some of these packages require package **sf**, which cannot be installed on the GC R Studio Server.  You will need to work on your own machine.
+
+
+### Create Your R Studio Project
+
+You will work with a repository that contains the NYT data as a submodule, so the process of creating an R Studio project will be different than usual.
+
+1. Open your terminal and `cd` to wherever you keep your git-controlled projects.
+2. Clone my repository along with its submodule:
+
+    ```
+    git clone --recursive https://github.com/homerhanumat/nyt-covid-analysis.git
+    ```
+    
+3.  In R Studio ask to create a new Project, in an existing directory.  Specify the directory that was created by the clone in the previous step.
+
+### Updating
+
+The purpose of having the NYT data as a submodule in our repository is to permit you to keep you to track your analysis work separately from the data on which your analysis is based.  With your terminal's working directory set to the root directory of your project, git commands such as `add`, `commit` and (should you choose to create a remote on Github) `push` will apply to your project only and will have no effect on the contents of the `covid-19-data` folder within it.
+
+Always remember that the `covid-19-data` directory in your repo is a git submodule that links to the NYT repo.  Don't modify anything in this directory!
+
+The New York Times updates its repository every day, and you will want to keep up with those changes.  The submodule allows you to accomplish this without interfering with any of your analysis work.   In order to update the data, take the following to steps:
+
+1. Run the following command in your terminal:
+
+    ```
+    git submodule update --remote
+    ```
+
+2. Then source the `import.R` file.
+
+The data tables in your `data` directory will be updated.  To do your analysis, you'll load them into your Global Environment:
+
+```{r eval = FALSE}
+load("data/nyt_counties.rda")
+load("data/nyt_states.rda")
+```
+
+
+We now illustrate a couple of things you can do with the data.
+
+
+## Line Graphs
+
+Looking at states with a threshold of confirmed cases, make line graphs of the number of cases against the number of days since the threshold was reached.
+
+```{r}
+threshold <- 500
+```
+
+
+```{r}
+t_states <-
+  nyt_states %>% 
+  group_by(state) %>% 
+  filter(cases >= threshold) %>% 
+  arrange(date) %>% 
+  mutate(day_number = row_number()) %>% 
+  arrange(state)
+```
+
+Have a look:
+
+```{r}
+reactable::reactable(t_states, searchable = TRUE)
+```
+
+The line graph
+
+
+```{r}
+ggplot(t_states, aes(x = day_number, y = cases)) +
+  geom_line(aes(color = state))
+```
+
+Too many!
+
+Make a function out of this:
+
+```{r}
+make_graph <- function(threshold = 500, included) {
+  p <-
+    nyt_states %>% 
+    filter(state %in% included) %>% 
+    group_by(state) %>% 
+    filter(cases >= threshold) %>% 
+    arrange(date) %>% 
+    mutate(day_number = row_number()) %>% 
+    ggplot(aes(x = day_number, y = cases,
+               label1 = state, label2 = date, 
+               label3 = cases, label4 = deaths)) +
+      geom_line(aes(color = state)) +
+      labs(x = "days since threshold reached",
+           y = "confirmed cases")
+    plotly::ggplotly(p, tooltip = c("label1", "label2",
+                                    "label3", "label4")) %>% 
+      plotly::config(displayModeBar = FALSE)
+}
+```
+
+Give it a try:
+
+```{r}
+included <- c("California", "Washington", "New York", "Louisiana")
+make_graph(included = included)
+```
+
+## Kentucky Map for a Day
+
+### Note
+
+The following plots use R packages that require package **sf**, which cannot be installed on the GC R Studio Server.
+
+### Data
+
+Get the data:
+
+```{r}
+## get the most recent available day:
+day <-
+  nyt_counties %>% 
+  pull(date) %>% 
+  unique() %>% 
+  sort(decreasing = TRUE) %>% 
+  .[1]
+## devtools::install_github("UrbanInstitute/urbnmapr")
+counties_sf <- urbnmapr::get_urbn_map("counties", sf = TRUE)
+tn <-
+  nyt_counties %>% 
+  filter(state == "Tennessee", date == day) %>% 
+  right_join(counties_sf %>% filter(state_name == "Tennessee"),
+             by = c("fips" = "county_fips")) %>% 
+mutate(cases = ifelse(is.na(cases), 0, cases),
+         deaths = ifelse(is.na(deaths), 0, deaths))
+```
+
+### ggplot2
+
+**ggplot2** has native support for simple features:
+
+
+```{r}
+ggplot() +
+  geom_sf(tn,
+          mapping = aes(fill = cases, geometry = geometry),
+          color = "white", size = 0.05) +
+  coord_sf(datum = NA) +
+  labs(fill = "Confirmed Cases",
+       title = paste0("Tennessee COVID-19 Cases as of ", day))
+```
+
+Sure would be nice to get **plotly** working with this.
+
+### mapview
+
+There is also **mapview**:
+
+```{r}
+tn %>% 
+  sf::st_as_sf() %>% 
+  mapview::mapview(zcol = c("cases", "deaths", "county_name"))
+```
+
+
+
+
+
+
+
+
+
+
+
+
